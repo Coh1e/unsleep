@@ -1,0 +1,82 @@
+#include <windows.h>
+#include <commctrl.h>
+#pragma code_page(65001)
+
+1 RT_MANIFEST "app.manifest"
+128 ICON "app.ico"
+130 ICON "light-inactive.ico"
+140 ICON "light-active.ico"
+142 ICON "color-inactive.ico"
+143 ICON "color-active.ico"
+144 ICON "dark-inactive.ico"
+145 ICON "dark-active.ico"
+
+129 MENU
+BEGIN
+  POPUP "Unsleep"
+  BEGIN
+    MENUITEM "About", 32774
+    MENUITEM SEPARATOR
+    POPUP "Active for"
+    BEGIN
+      MENUITEM "15 minutes", 32795
+      MENUITEM "30 minutes", 32796
+      MENUITEM "45 minutes", 32800
+      MENUITEM SEPARATOR
+      MENUITEM "1 hour", 32778
+      MENUITEM "2 hours", 32779
+      MENUITEM "4 hours", 32782
+      MENUITEM "6 hours", 32820
+      MENUITEM "8 hours", 32783
+      MENUITEM "10 hours", 32814
+      MENUITEM "24 hours", 32784
+    END
+    POPUP "Inactive for"
+    BEGIN
+      MENUITEM "15 minutes", 32804
+      MENUITEM "30 minutes", 32805
+      MENUITEM "45 minutes", 32806
+      MENUITEM SEPARATOR
+      MENUITEM "1 hour", 32780
+      MENUITEM "2 hours", 32781
+      MENUITEM "4 hours", 32785
+      MENUITEM "6 hours", 32819
+      MENUITEM "8 hours", 32786
+      MENUITEM "10 hours", 32818
+      MENUITEM "24 hours", 32787
+    END
+    MENUITEM "Show status", 32808
+    MENUITEM SEPARATOR
+    MENUITEM "Active", 32773
+    MENUITEM "Resume schedule", 32812
+    MENUITEM SEPARATOR
+    MENUITEM "Exit", 32771
+  END
+END
+
+139 DIALOGEX 0, 0, 220, 70
+STYLE DS_SETFONT | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Unsleep"
+FONT 9, "Segoe UI"
+BEGIN
+  CTEXT "Unsleep is inactive", 1005, 10, 24, 200, 20
+END
+
+138 DIALOGEX 0, 0, 400, 300
+STYLE DS_SETFONT | DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "About Unsleep"
+FONT 9, "Segoe UI"
+BEGIN
+  LTEXT "Unsleep", -1, 12, 10, 376, 14
+  LTEXT "Windows desktop keep-awake utility", 1004, 12, 29, 376, 28
+  LTEXT "Project website", 1003, 12, 60, 376, 12, SS_NOTIFY
+  CONTROL "", 1006, WC_LISTVIEW, WS_BORDER | WS_TABSTOP | LVS_REPORT | LVS_NOCOLUMNHEADER | LVS_SINGLESEL, 12, 80, 376, 183
+  DEFPUSHBUTTON "Close", IDOK, 328, 274, 60, 16
+END
+
+146 DIALOGEX 0, 0, 180, 80
+STYLE DS_SETFONT | WS_POPUP
+EXSTYLE WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE
+FONT 9, "Segoe UI"
+BEGIN
+END
