@@ -1,82 +1,53 @@
 #include <windows.h>
-#include <commctrl.h>
 #pragma code_page(65001)
 
 1 RT_MANIFEST "app.manifest"
+
+// Application icon. Kept on its long-standing id.
 128 ICON "app.ico"
+
+// Tray icons, two palettes by taskbar background and a variant per
+// configuration combination. The id follows the picture, not the file name:
+//   light-*.ico  -> dark strokes, for a LIGHT taskbar
+//   dark-*.ico   -> light strokes, for a DARK taskbar
+// src/win32.cpp maps the measured background and the selected options onto
+// these ids; resources/icons/DESIGN.md documents the table.
 130 ICON "light-inactive.ico"
 140 ICON "light-active.ico"
-142 ICON "color-inactive.ico"
-143 ICON "color-active.ico"
+150 ICON "light-screen.ico"
+151 ICON "light-screen-paused.ico"
+152 ICON "light-duration.ico"
+153 ICON "light-screen-duration.ico"
+154 ICON "light-screen-paused-duration.ico"
+
 144 ICON "dark-inactive.ico"
 145 ICON "dark-active.ico"
+155 ICON "dark-screen.ico"
+156 ICON "dark-screen-paused.ico"
+157 ICON "dark-duration.ico"
+158 ICON "dark-screen-duration.ico"
+159 ICON "dark-screen-paused-duration.ico"
 
 129 MENU
 BEGIN
   POPUP "Unsleep"
   BEGIN
-    MENUITEM "About", 32774
-    MENUITEM SEPARATOR
-    POPUP "Active for"
+    MENUITEM "防休眠", 40001
+    MENUITEM "保持屏幕常亮", 40006
+    POPUP "持续时间"
     BEGIN
-      MENUITEM "15 minutes", 32795
-      MENUITEM "30 minutes", 32796
-      MENUITEM "45 minutes", 32800
-      MENUITEM SEPARATOR
-      MENUITEM "1 hour", 32778
-      MENUITEM "2 hours", 32779
-      MENUITEM "4 hours", 32782
-      MENUITEM "6 hours", 32820
-      MENUITEM "8 hours", 32783
-      MENUITEM "10 hours", 32814
-      MENUITEM "24 hours", 32784
+      MENUITEM "不限时", 40010
+      MENUITEM "30 分钟", 40011
+      MENUITEM "1 小时", 40012
+      MENUITEM "2 小时", 40013
     END
-    POPUP "Inactive for"
+    POPUP "电池保护"
     BEGIN
-      MENUITEM "15 minutes", 32804
-      MENUITEM "30 minutes", 32805
-      MENUITEM "45 minutes", 32806
-      MENUITEM SEPARATOR
-      MENUITEM "1 hour", 32780
-      MENUITEM "2 hours", 32781
-      MENUITEM "4 hours", 32785
-      MENUITEM "6 hours", 32819
-      MENUITEM "8 hours", 32786
-      MENUITEM "10 hours", 32818
-      MENUITEM "24 hours", 32787
+      MENUITEM "10%", 40003
+      MENUITEM "20%", 40004
+      MENUITEM "30%", 40005
     END
-    MENUITEM "Show status", 32808
     MENUITEM SEPARATOR
-    MENUITEM "Active", 32773
-    MENUITEM "Resume schedule", 32812
-    MENUITEM SEPARATOR
-    MENUITEM "Exit", 32771
+    MENUITEM "退出", 40002
   END
-END
-
-139 DIALOGEX 0, 0, 220, 70
-STYLE DS_SETFONT | WS_POPUP | WS_CAPTION | WS_SYSMENU
-CAPTION "Unsleep"
-FONT 9, "Segoe UI"
-BEGIN
-  CTEXT "Unsleep is inactive", 1005, 10, 24, 200, 20
-END
-
-138 DIALOGEX 0, 0, 400, 300
-STYLE DS_SETFONT | DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
-CAPTION "About Unsleep"
-FONT 9, "Segoe UI"
-BEGIN
-  LTEXT "Unsleep", -1, 12, 10, 376, 14
-  LTEXT "Windows desktop keep-awake utility", 1004, 12, 29, 376, 28
-  LTEXT "Project website", 1003, 12, 60, 376, 12, SS_NOTIFY
-  CONTROL "", 1006, WC_LISTVIEW, WS_BORDER | WS_TABSTOP | LVS_REPORT | LVS_NOCOLUMNHEADER | LVS_SINGLESEL, 12, 80, 376, 183
-  DEFPUSHBUTTON "Close", IDOK, 328, 274, 60, 16
-END
-
-146 DIALOGEX 0, 0, 180, 80
-STYLE DS_SETFONT | WS_POPUP
-EXSTYLE WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE
-FONT 9, "Segoe UI"
-BEGIN
 END

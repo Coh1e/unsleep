@@ -8,3 +8,18 @@
 *.exe
 *.dll
 *.log
+
+# Project-local AI execution, credentials and generated data
+/.pi/
+/tools/
+/tmp/
+/logs/
+/work/
+/data/
+/runtime/
+/evidence/
+/publish/
+/.deps/
+.env
+.env.*
+!.env.example

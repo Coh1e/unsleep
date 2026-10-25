@@ -1,181 +1,476 @@
 #include "unsleep/core.hpp"
-#include <algorithm>
-#include <cwctype>
+
 #include <format>
-#include <limits>
-#include <stdexcept>
 #include <utility>
 
 namespace unsleep {
 namespace {
-int integer_prefix(std::wstring_view text) {
-    while (!text.empty() && std::iswspace(text.front())) text.remove_prefix(1);
-    bool negative = false;
-    if (!text.empty() && (text.front() == L'-' || text.front() == L'+')) {
-        negative = text.front() == L'-'; text.remove_prefix(1);
-    }
-    std::uint64_t number = 0;
-    bool any = false;
-    for (wchar_t ch : text) {
-        if (ch < L'0' || ch > L'9') break;
-        any = true;
-        const auto digit = static_cast<unsigned>(ch - L'0');
-        constexpr auto maximum = static_cast<std::uint64_t>(std::numeric_limits<int>::max());
-        if (number > (maximum - digit) / 10) throw std::invalid_argument("Numeric option overflows a signed 32-bit integer");
-        number = number * 10 + digit;
-    }
-    if (!any) return 0; // _wtoi-compatible defined nonnumeric result.
-    if (negative && number > 1) throw std::invalid_argument("Negative option values below -1 are unsupported");
-    return negative ? -static_cast<int>(number) : static_cast<int>(number);
-}
-std::optional<std::wstring_view> suffix(std::wstring_view raw, std::wstring_view flag) {
-    const auto at = raw.find(flag);
-    if (at == raw.npos) return std::nullopt;
-    return raw.substr(at + flag.size());
-}
+
+bool percent_known(const BatterySample& sample) noexcept {
+    return sample.percent && *sample.percent >= 0 && *sample.percent <= 100;
 }
 
-Options parse_options(std::wstring_view input) {
-    Options o;
-    while (!input.empty() && std::iswspace(input.front())) input.remove_prefix(1);
-    o.raw = input;
-    std::ranges::transform(o.raw, o.raw.begin(), [](wchar_t ch) { return static_cast<wchar_t>(std::towlower(ch)); });
-    const std::wstring_view raw = o.raw;
-    const auto has = [&](std::wstring_view flag) { return raw.find(flag) != raw.npos; };
-    const auto numeric = [&](std::wstring_view flag, int fallback) { const auto value = suffix(raw, flag); return value ? integer_prefix(*value) : fallback; };
-    if (!raw.empty() && raw.front() >= L'1' && raw.front() <= L'9') o.interval_seconds = integer_prefix(raw);
-    o.start_off = has(L"-startoff"); o.use_shift = has(L"-useshift");
-    o.allow_screensaver = has(L"-allowss"); o.execution_state = has(L"-stes");
-    o.full_keypress = has(L"-keypress"); o.on_ac = has(L"-onac"); o.notify = has(L"-notify");
-    o.no_icon = has(L"-noicon"); o.show_dialog = has(L"-showdlg"); o.on_taskbar = has(L"-ontaskbar");
-    o.replace = has(L"-replace");
-    if (has(L"-oldicons")) o.icons = Icons::old;
-    if (has(L"-lighticons")) o.icons = Icons::light;
-    if (has(L"-darkicons")) o.icons = Icons::dark;
-    if (has(L"-appexit")) o.remote = Remote::exit;
-    else if (has(L"-appon")) o.remote = Remote::on;
-    else if (has(L"-appoff")) o.remote = Remote::off;
-    else if (has(L"-apptoggleshowdlg")) o.remote = Remote::toggle_show;
-    else if (has(L"-apptoggle")) o.remote = Remote::toggle;
-    else if (has(L"-replaceinactiveafter30")) o.remote = Remote::active_thirty;
-    o.active_for = numeric(L"-activefor:", -1); o.inactive_for = numeric(L"-inactivefor:", -1);
-    o.exit_after = numeric(L"-exitafter:", -1); o.cpu = numeric(L"-cpu:", -1); o.key = numeric(L"-key:", -1);
-    if (auto hours = suffix(raw, L"-activehours:"); hours && hours->size() >= 24) {
-        int start = -1;
-        for (int hour = 0; hour < 24; ++hour) {
-            if ((*hours)[static_cast<std::size_t>(hour)] == L'x') { if (start < 0) start = hour * 60; }
-            else if (start >= 0) { o.periods.push_back({start, hour * 60 - 1}); start = -1; }
-        }
-        if (start >= 0) o.periods.push_back({start, 1439});
-    }
-    if (auto periods = suffix(raw, L"-activeperiods:")) {
-        o.periods.clear();
-        auto text = periods->substr(0, periods->find_first_of(L" \t.:"));
-        while (text.size() >= 9) {
-            auto part = text.substr(0, 9);
-            if (part[4] == L'-') {
-                const int h1 = integer_prefix(part.substr(0,2)), m1 = integer_prefix(part.substr(2,2));
-                const int h2 = integer_prefix(part.substr(5,2)), m2 = integer_prefix(part.substr(7,2));
-                if (h1 >= 0 && h1 < 24 && h2 >= 0 && h2 < 24 && m1 >= 0 && m1 < 60 && m2 >= 0 && m2 < 60 && h1*60+m1 < h2*60+m2)
-                    o.periods.push_back({h1*60+m1,h2*60+m2});
-            }
-            if (text.size() < 10) break;
-            text.remove_prefix(10);
-        }
-    }
-    if (auto watch = suffix(raw, L"-watchwindow:")) o.watch_window = *watch;
-    auto append = [&](std::wstring text) { o.description += std::move(text) + L", "; };
-    if (!raw.empty() && raw.front() >= L'1' && raw.front() <= L'9') append(std::format(L"Every {}s",o.interval_seconds));
-    if(o.no_icon) append(L"no icon");
-    if(has(L"-notwhenlocked")) append(L"not when locked");
-    if(has(L"-oldicons")) append(L"use old icons"); if(has(L"-lighticons")) append(L"use light icons"); if(has(L"-darkicons")) append(L"use dark icons");
-    if(o.start_off) append(L"start off"); if(o.use_shift) append(L"use shift"); if(o.allow_screensaver) append(L"allow screensaver");
-    if(o.execution_state) append(L"STES"); if(o.full_keypress) append(L"full keypress"); if(o.on_ac) append(L"only on AC power"); if(o.notify) append(L"notify on active change");
-    if(suffix(raw,L"-exitafter:")) append(std::format(L"exit after {}m",o.exit_after));
-    if(suffix(raw,L"-activefor:")) append(std::format(L"active for {}m",o.active_for));
-    if(!o.periods.empty()) { std::wstring list; for(const auto& period:o.periods) { if(!list.empty()) list+=L", "; list+=period_text(period); } append(L"active during periods: "+list); }
-    if(suffix(raw,L"-cpu:")) append(std::format(L"while CPU > {}%",o.cpu));
-    if(!o.watch_window.empty()) append(L"active when '"+o.watch_window+L"' is present");
-    if(suffix(raw,L"-key:")) append(std::format(L"use key {}",o.key));
-    if(suffix(raw,L"-inactivefor:")) append(std::format(L"inactive for {}m",o.inactive_for));
-    if(o.description.ends_with(L", ")) o.description.resize(o.description.size()-2);
-    return o;
+int normalized_threshold(int percent) noexcept {
+    return is_valid_threshold(percent) ? percent : default_battery_threshold;
 }
 
-std::wstring period_text(const Period& p) { return std::format(L"{:02}:{:02}-{:02}:{:02}", p.begin/60,p.begin%60,p.end/60,p.end%60); }
-Model::Model(Options options) : options_(std::move(options)), seconds_to_key_(options_.interval_seconds) {
-    if(options_.interval_seconds < 1) throw std::invalid_argument("Positive interval required");
-    if(options_.start_off) { toggle(); notifications_.clear(); }
-    active_remaining_=options_.active_for; exit_remaining_=options_.exit_after;
-    cpu_threshold_=options_.cpu; watch_window_=options_.watch_window;
-    if(options_.raw.find(L"-inactivefor:") != std::wstring::npos) { toggle(); inactive_remaining_=options_.inactive_for; }
-    notifications_.clear();
+const wchar_t* target_name(RequestTarget target) noexcept {
+    return target == RequestTarget::display ? L"屏幕" : L"系统";
 }
-void Model::notify(std::wstring text) { if(options_.notify) notifications_.push_back(std::move(text)); }
-const Period* Model::current_period(int minute) const noexcept { for(const auto& p:options_.periods) if(p.contains(minute)) return &p; return nullptr; }
-void Model::toggle() {
-    active_remaining_=inactive_remaining_=exit_remaining_=-1;
-    active_=!active_; watch_window_.clear(); cpu_threshold_=-1; manual_=true; revert_available_=true;
+
+using TimePoint = Model::TimePoint;
+
+// Saturating deadline arithmetic: a clock reading close to the end of its
+// range must not overflow into a past deadline.
+TimePoint add_length(TimePoint base, std::chrono::minutes length) noexcept {
+    const auto delta = std::chrono::duration_cast<TimePoint::duration>(length);
+    if (base > TimePoint::max() - delta) return TimePoint::max();
+    return base + delta;
 }
-void Model::set_active(bool value) { if(active_ != value) { notify(value ? L"active" : L"Inactive"); toggle(); } }
-void Model::timed_active(int minutes) { if(minutes < 1) throw std::invalid_argument("Positive duration required"); set_active(true); active_remaining_=minutes; }
-void Model::timed_inactive(int minutes) { if(minutes < 1) throw std::invalid_argument("Positive duration required"); set_active(false); inactive_remaining_=minutes; }
-void Model::revert(int minute) { manual_=false; revert_available_=false; refresh_schedule(minute); }
-void Model::refresh_schedule(int minute) {
-    if(manual_ || options_.periods.empty()) return;
-    const bool next=current_period(minute)!=nullptr;
-    if(next != active_) { active_=next; notify(next ? L"active" : L"inactive"); }
+
+// Which stop reason wins when several conditions are observed in the same
+// handling cycle, per the product order: sleep/resume, low battery or unknown
+// battery, request failure, expiry, ordinary actions.
+int reason_rank(StopReason reason) noexcept {
+    switch (reason) {
+    case StopReason::sleep: return 0;
+    case StopReason::low_battery: return 1;
+    case StopReason::battery_unknown: return 2;
+    case StopReason::request_failed: return 3;
+    case StopReason::expired: return 4;
+    case StopReason::manual: return 5;
+    case StopReason::none: return 6;
+    }
+    return 6;
 }
-Effects Model::tick(const Inputs& in) {
-    Effects effect;
-    refresh_schedule(in.minute_of_day);
-    --seconds_to_key_;
-    if(seconds_to_key_==0) {
-        seconds_to_key_=options_.interval_seconds;
-        if(active_) {
-            if(options_.allow_screensaver) effect.keep_awake=KeepAwake::system;
-            else if(options_.execution_state) effect.keep_awake=KeepAwake::display;
-            else {
-                if(options_.not_when_locked && locked_) {
-                    effect.skipped_tail=true; effect.notifications=take_notifications(); return effect;
-                }
-                if(!in.shift_down) {
-                    if((!watch_window_.empty() && !in.matching_window) || (!options_.periods.empty() && !current_period(in.minute_of_day)) || (options_.on_ac && !in.ac_power)) {
-                        effect.skipped_tail=true; effect.notifications=take_notifications(); return effect;
-                    }
-                    effect.keep_awake=KeepAwake::key;
-                    effect.key=static_cast<std::uint16_t>(options_.key==-1 ? (options_.use_shift ? 0x10 : 0x7e) : options_.key);
-                    effect.key_up_only=!options_.full_keypress; // Host OS fallback is applied by the Win32 adapter.
-                }
-            }
+
+// Ordinary actions are the least urgent stop requests; everything else outranks
+// an already-reached deadline and keeps its own reason.
+bool is_urgent(StopReason reason) noexcept {
+    return reason != StopReason::manual && reason != StopReason::none;
+}
+
+} // namespace
+
+bool is_valid_duration(Duration duration) noexcept {
+    switch (duration) {
+    case Duration::unlimited:
+    case Duration::minutes_30:
+    case Duration::hours_1:
+    case Duration::hours_2:
+        return true;
+    }
+    return false;
+}
+
+std::chrono::minutes duration_length(Duration duration) noexcept {
+    switch (duration) {
+    case Duration::unlimited: return std::chrono::minutes{0};
+    case Duration::minutes_30: return std::chrono::minutes{30};
+    case Duration::hours_1: return std::chrono::minutes{60};
+    case Duration::hours_2: return std::chrono::minutes{120};
+    }
+    return std::chrono::minutes{0};
+}
+
+Model::Model(int low_battery_threshold, Clock clock)
+    : threshold_(normalized_threshold(low_battery_threshold)),
+      clock_(std::move(clock)) {
+    if (!clock_) clock_ = [] { return std::chrono::steady_clock::now(); };
+    now_ = clock_();
+}
+
+// Conservative gate: run only with clear evidence that battery protection is
+// satisfied. A successful read that confirms AC power is sufficient on its
+// own; battery presence and charge do not need to be known while plugged in.
+// An absent battery is allowed, and an unplugged battery must report a known
+// charge above the threshold. Unknown data never fabricates a charge value.
+std::optional<StopReason> Model::gate(const BatterySample& sample) const {
+    if (sample.read_failed) return StopReason::battery_unknown;
+    if (sample.ac == AcState::plugged) return std::nullopt;
+    if (sample.presence == BatteryPresence::absent) return std::nullopt;
+    if (sample.ac == AcState::unknown) return StopReason::battery_unknown;
+    if (!percent_known(sample)) return StopReason::battery_unknown;
+    if (*sample.percent <= threshold_) return StopReason::low_battery;
+    return std::nullopt;
+}
+
+void Model::advance_time() noexcept {
+    // Monotonic and order-insensitive: an out-of-order or stale reading can
+    // never move the clock backwards.
+    const TimePoint reading = clock_();
+    if (reading > now_) now_ = reading;
+}
+
+bool Model::expire_if_due() {
+    if (!running_ || !deadline_) return false;
+    if (now_ < *deadline_) return false;
+    // Expiry speaks for itself in the tooltip and is never announced.
+    enter_stop(StopReason::expired, true);
+    return true;
+}
+
+void Model::refresh_time() {
+    advance_time();
+    static_cast<void>(expire_if_due());
+}
+
+std::optional<std::chrono::seconds> Model::remaining_time() const {
+    if (!running_ || !deadline_) return std::nullopt;
+    if (now_ >= *deadline_) return std::chrono::seconds{0};
+    return std::chrono::ceil<std::chrono::seconds>(*deadline_ - now_);
+}
+
+std::wstring Model::remaining_text() const {
+    const auto remaining = remaining_time();
+    if (!remaining) return L"不限时";
+    const auto total = remaining->count();
+    if (total >= 60) return std::format(L"剩余 {} 分 {} 秒", total / 60, total % 60);
+    return std::format(L"剩余 {} 秒", total);
+}
+
+DurationChange Model::set_duration(Duration duration) {
+    // Ordinary action: apply an already-reached deadline first so selecting a
+    // duration can never extend a finished session.
+    refresh_time();
+    if (!is_valid_duration(duration)) return DurationChange::rejected;
+    if (!running_) return DurationChange::rejected_stopped;
+    if (duration == duration_) return DurationChange::unchanged;
+    duration_ = duration;
+    if (duration == Duration::unlimited) {
+        deadline_.reset();
+        return DurationChange::updated;
+    }
+    deadline_ = add_length(now_, duration_length(duration));
+    return DurationChange::updated;
+}
+
+bool Model::start() {
+    if (running_) return true;
+    reset_notifications();
+    if (const auto reason = gate(sample_)) {
+        enter_stop(*reason, false);
+        return false;
+    }
+    advance_time();
+    running_ = true;
+    confirmed_ = false;
+    release_unconfirmed_ = false;
+    // Every start uses the product defaults: display may turn off, no limit.
+    clear_display_state();
+    display_release_unconfirmed_ = false;
+    duration_ = Duration::unlimited;
+    deadline_.reset();
+    reason_ = StopReason::none;
+    failed_request_ = RequestTarget::system;
+    last_error_ = 0;
+    actions_.clear();
+    actions_.push_back(Action::apply_system_request);
+    return true;
+}
+
+void Model::stop(StopReason reason) {
+    if (running_ && deadline_ && !is_urgent(reason)) {
+        // An ordinary stop (manual) is the least urgent event, so a deadline
+        // that has already been reached is applied first and keeps its own
+        // reason, exactly as the periodic tick would have done. The intent is
+        // still stop: this branch can only end a session, never start one.
+        //
+        // The clock is read only when a deadline exists, matching the stated
+        // contract: an unlimited session reaches enter_stop(manual) without
+        // touching the monotonic clock at all, so its outcome cannot depend on
+        // which instant the stop happens to be handled.
+        advance_time();
+        if (expire_if_due()) return;
+    }
+
+    if (!running_) {
+        // While stopped only a more urgent reason may replace the recorded
+        // one, so a concurrent low-battery/sleep observation still wins over
+        // an earlier expiry and a later ordinary action never rewrites it.
+        if (reason_ == StopReason::none ||
+            (reason != StopReason::none && reason_rank(reason) < reason_rank(reason_))) {
+            reason_ = reason;
+        }
+        return;
+    }
+    enter_stop(reason, true);
+}
+
+bool Model::toggle() {
+    // The user's intent is fixed before any clock or battery handling: a
+    // running session here means "stop", and a stopped one means "start".
+    // The stop itself decides the reason (expired when the deadline has already
+    // been reached, manual otherwise), so reaching the deadline in this cycle
+    // can never turn the stop intent into a fresh start. Only a session that
+    // is already stopped can start.
+    if (!running_) return start();
+    stop(StopReason::manual);
+    return false;
+}
+
+DisplayToggle Model::toggle_display() {
+    // Ordinary action: a reached deadline stops the session before the
+    // selection can be applied, so time advancing never restores anything.
+    refresh_time();
+    // Screen keep-awake is a this-session option and only meaningful while the
+    // keep-awake session is running.
+    if (!running_) return DisplayToggle::rejected_stopped;
+
+    if (display_selected_) {
+        display_selected_ = false;
+        display_pending_ = false;
+        // Dropping the display request keeps the system request in place.
+        if (display_confirmed_) {
+            display_confirmed_ = false;
+            actions_.push_back(Action::release_display_request);
+        }
+        return DisplayToggle::disabled;
+    }
+
+    display_selected_ = true;
+    // The initial session state is queried by the adapter. When it is locked
+    // or could not be read reliably, the selection is remembered but the
+    // display request waits for an explicit unlock notification.
+    if (display_suppressed()) return DisplayToggle::deferred_locked;
+    display_pending_ = true;
+    actions_.push_back(Action::apply_display_request);
+    return DisplayToggle::enabled;
+}
+
+void Model::observe(const BatterySample& sample) {
+    sample_ = sample;
+    advance_time();
+    if (!running_) return;
+    // The battery gate is checked before the deadline so that a cycle which
+    // observes both keeps the product priority (low battery over expiry).
+    if (const auto reason = gate(sample_)) {
+        enter_stop(*reason, true);
+        return;
+    }
+    static_cast<void>(expire_if_due());
+}
+
+void Model::observe_session(SessionState state) {
+    // Ordinary action: a reached deadline stops the session first, so an
+    // unlock after the deadline never restores screen keep-awake.
+    refresh_time();
+    if (state == session_state_) return;
+    session_state_ = state;
+    if (!running_) return;
+
+    if (state == SessionState::unlocked) {
+        // Restore only for this run and only while the display option is
+        // still selected. A pending request must not be queued twice.
+        if (display_selected_ && !display_confirmed_ && !display_pending_) {
+            display_pending_ = true;
+            actions_.push_back(Action::apply_display_request);
+        }
+        return;
+    }
+
+    // A lock releases the display request but keeps the system request. If an
+    // apply is still in flight, its late result is handled there.
+    if (display_confirmed_) {
+        display_confirmed_ = false;
+        actions_.push_back(Action::release_display_request);
+    }
+}
+
+ThresholdChange Model::set_threshold(int percent) {
+    if (!is_valid_threshold(percent)) return ThresholdChange::rejected;
+    if (percent == threshold_) return ThresholdChange::unchanged;
+    threshold_ = percent;
+    // Ordinary action: apply an already-reached deadline first, then the new
+    // threshold. A stopped session (including an expired one) never restarts.
+    refresh_time();
+    if (!running_) return ThresholdChange::updated;
+    if (const auto reason = gate(sample_)) {
+        enter_stop(*reason, true);
+        return ThresholdChange::stopped;
+    }
+    return ThresholdChange::updated;
+}
+
+void Model::on_request_result(bool accepted, int error_code) {
+    if (!running_) {
+        // A late success after stop must not revive the session; make sure the
+        // request is released again instead.
+        if (accepted) actions_.push_back(Action::release_request);
+        return;
+    }
+    if (accepted) {
+        confirmed_ = true;
+        last_error_ = 0;
+        return;
+    }
+    last_error_ = error_code;
+    failed_request_ = RequestTarget::system;
+    enter_stop(StopReason::request_failed, true);
+    notify_fault(error_code != 0
+        ? std::format(L"系统请求失败（错误 {}），防休眠已停止", error_code)
+        : std::wstring(L"系统请求失败，防休眠已停止"));
+}
+
+void Model::on_display_result(bool accepted, int error_code) {
+    display_pending_ = false;
+    if (!accepted) {
+        display_confirmed_ = false;
+        if (!running_) return;
+        last_error_ = error_code;
+        failed_request_ = RequestTarget::display;
+        enter_stop(StopReason::request_failed, true);
+        notify_fault(error_code != 0
+            ? std::format(L"屏幕请求失败（错误 {}），防休眠已停止", error_code)
+            : std::wstring(L"屏幕请求失败，防休眠已停止"));
+        return;
+    }
+
+    if (!running_) {
+        // A late success after a stop must not keep anything awake. A full
+        // release is safe and, unlike the display-only release, cannot
+        // re-request the system while the session is stopped.
+        actions_.push_back(Action::release_request);
+        return;
+    }
+    if (!display_selected_ || display_suppressed()) {
+        // A late success after a toggle-off or a lock must not keep the
+        // display awake; the running system request stays in place.
+        actions_.push_back(Action::release_display_request);
+        return;
+    }
+    display_confirmed_ = true;
+    display_release_unconfirmed_ = false;
+}
+
+void Model::on_release_result(bool released) {
+    release_unconfirmed_ = !released;
+    // Releasing both requests is all-or-nothing per the adapter contract; a
+    // failed full release leaves the display state unconfirmed as well.
+    display_release_unconfirmed_ = !released;
+}
+
+void Model::on_display_release_result(bool released, int error_code) {
+    if (released) {
+        display_release_unconfirmed_ = false;
+        return;
+    }
+    // A late failure after stop is already covered by the full release and
+    // must not revive or re-notify anything.
+    if (!running_) return;
+    last_error_ = error_code;
+    failed_request_ = RequestTarget::display;
+    enter_stop(StopReason::request_failed, true);
+    notify_fault(error_code != 0
+        ? std::format(L"屏幕请求释放失败（错误 {}），防休眠已停止", error_code)
+        : std::wstring(L"屏幕请求释放失败，防休眠已停止"));
+}
+
+std::vector<Action> Model::take_actions() { return std::exchange(actions_, {}); }
+
+std::vector<std::wstring> Model::take_notifications() { return std::exchange(notifications_, {}); }
+
+void Model::reset_notifications() {
+    low_battery_notified_ = false;
+    unknown_notified_ = false;
+    fault_notified_ = false;
+}
+
+void Model::notify_fault(std::wstring message) {
+    if (fault_notified_) return;
+    fault_notified_ = true;
+    notifications_.push_back(std::move(message));
+}
+
+void Model::clear_display_state() noexcept {
+    display_selected_ = false;
+    display_confirmed_ = false;
+    display_pending_ = false;
+}
+
+void Model::enter_stop(StopReason reason, bool was_running) {
+    running_ = false;
+    confirmed_ = false;
+    reason_ = reason;
+    // The deadline belongs to this session only; the selected duration stays
+    // as the (disabled) menu state until the next start resets it.
+    deadline_.reset();
+    clear_display_state();
+    display_release_unconfirmed_ = false;
+    if (was_running) {
+        // Dropping a not-yet-applied request is safe: the release call also
+        // clears any request the system may already hold.
+        actions_.clear();
+        actions_.push_back(Action::release_request);
+    }
+    switch (reason) {
+    case StopReason::low_battery:
+        if (!low_battery_notified_) {
+            low_battery_notified_ = true;
+            notifications_.push_back(was_running ? L"电量低，防休眠已停止" : L"电量低，防休眠未开启");
+        }
+        break;
+    case StopReason::battery_unknown:
+        if (!unknown_notified_) {
+            unknown_notified_ = true;
+            notifications_.push_back(L"电池状态未知，防休眠已停止");
+        }
+        break;
+    default:
+        // Manual stops, sleep and request failures stay silent here; request
+        // failures add their own one-time message.
+        break;
+    }
+}
+
+std::wstring Model::status_text() const {
+    std::wstring text;
+    if (running_) {
+        const std::wstring remaining = remaining_text();
+        if (!confirmed_) {
+            text = display_selected_ ? L"正在请求防休眠与屏幕常亮…" : L"正在请求防休眠…";
+        } else if (!display_selected_) {
+            text = std::format(L"防休眠运行中（系统已接受请求，允许息屏，{}）", remaining);
+        } else if (session_state_ == SessionState::unknown) {
+            text = std::format(L"防休眠运行中（系统已接受请求，锁定状态未知，屏幕常亮已暂缓，{}）", remaining);
+        } else if (session_state_ == SessionState::locked) {
+            text = std::format(L"防休眠运行中（系统已接受请求，锁屏期间已释放屏幕请求，解锁后恢复，{}）", remaining);
+        } else if (display_confirmed_) {
+            text = std::format(L"防休眠运行中（系统及屏幕请求已接受，{}）", remaining);
+        } else {
+            text = std::format(L"防休眠运行中（系统已接受请求，正在请求屏幕常亮…，{}）", remaining);
+        }
+    } else {
+        switch (reason_) {
+        case StopReason::manual:
+            text = L"已停止（手动停止）";
+            break;
+        case StopReason::expired:
+            text = L"已停止（持续时间到期）";
+            break;
+        case StopReason::low_battery:
+            text = std::format(L"已停止（电量不高于 {}%）", threshold_);
+            break;
+        case StopReason::battery_unknown:
+            text = L"已停止（电池状态未知）";
+            break;
+        case StopReason::request_failed:
+            text = last_error_ != 0
+                ? std::format(L"已停止（{}请求失败，错误 {}）", target_name(failed_request_), last_error_)
+                : std::format(L"已停止（{}请求失败）", target_name(failed_request_));
+            break;
+        case StopReason::sleep:
+            text = L"已停止（系统睡眠）";
+            break;
+        case StopReason::none:
+            text = L"已停止";
+            break;
         }
     }
-    if(++minute_ticks_ >= 60) {
-        minute_ticks_=0;
-        if(active_remaining_ >= 0 && --active_remaining_ == 0) { notify(L"inactive"); set_active(false); }
-        if(exit_remaining_ >= 0 && --exit_remaining_ == 0) { effect.exit=true; effect.notifications=take_notifications(); return effect; }
-        if(inactive_remaining_ >= 0 && --inactive_remaining_ == 0) { notify(L"active"); set_active(true); }
-    }
-    if(cpu_threshold_ != -1 && active_) {
-        if(in.cpu_percent && *in.cpu_percent < cpu_threshold_ && cpu_samples_ > 3) { cpu_threshold_=-1; set_active(false); }
-        if(cpu_samples_ < std::numeric_limits<int>::max()) ++cpu_samples_;
-    }
-    effect.notifications=take_notifications();
-    return effect;
+    if (release_unconfirmed_) text += L"；系统请求释放未确认";
+    if (display_release_unconfirmed_) text += L"；屏幕请求释放未确认";
+    if (!threshold_persisted_) text += L"；电池阈值设置未保存";
+    return text;
 }
-std::vector<std::wstring> Model::take_notifications() { return std::exchange(notifications_,{}); }
-std::wstring Model::status(int minute) const {
-    std::wstring result;
-    if(!watch_window_.empty()) result=L"Active when a window title containing '"+watch_window_+L"' is found";
-    else if(active_remaining_ != -1) result=std::format(L"Will go inactive in {} minute(s)",active_remaining_);
-    else if(exit_remaining_ != -1) result=std::format(L"Will exit in {} minute(s)",exit_remaining_);
-    else if(inactive_remaining_ != -1) result=std::format(L"Will go active in {} minute(s)",inactive_remaining_);
-    else if(cpu_threshold_ != -1) result=std::format(L"Active while CPU > {}%",cpu_threshold_);
-    else if(manual_) result=active_ ? L"[Manual Override]: active" : L"[Manual Override]: inactive";
-    else if(options_.periods.empty()) result=active_ ? L"active" : L"inactive";
-    else if(const auto* period=current_period(minute)) result=L"Active during "+period_text(*period);
-    else result=L"Inactive (not in a period)";
-    if(!options_.description.empty()) result+=L"\r\n\r\n(cmd line: "+options_.description+L")";
-    return result;
-}
-}
+
+} // namespace unsleep
