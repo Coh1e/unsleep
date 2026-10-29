@@ -20,7 +20,7 @@
 
 电池阈值保存在程序同目录的 `unsleep.settings`，其他选项不保存。删除该文件即可恢复默认阈值；目录不可写时，本次选择仍有效，但无法保存。
 
-目前尚未发布下载版本，可按下方步骤从源码构建。
+下载版本见 [Releases](https://github.com/Coh1e/unsleep/releases)，也可通过 `scoop install coh1e/unsleep` 安装（[Coh1e/scoop-bucket](https://github.com/Coh1e/scoop-bucket)）；或按下方步骤从源码构建。
 
 ## 使用限制
 
