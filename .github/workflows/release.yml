@@ -1,0 +1,60 @@
+name: Release
+
+# A v* tag publishes the x64 binary. This repository has no separate CI workflow, so the release
+# job runs the tests itself before it uploads anything.
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read the tagged version
+        id: version
+        shell: pwsh
+        run: |
+          $version = $env:GITHUB_REF_NAME -replace '^v', ''
+          if ($version -notmatch '^\d+\.\d+\.\d+$') {
+            throw "Tag '$env:GITHUB_REF_NAME' is not v<major>.<minor>.<patch>"
+          }
+          "version=$version" >> $env:GITHUB_OUTPUT
+
+      - name: Configure
+        shell: pwsh
+        run: cmake -S . -B build -A x64
+
+      - name: Build
+        shell: pwsh
+        run: cmake --build build --config Release
+
+      - name: Test
+        shell: pwsh
+        run: ctest --test-dir build -C Release --output-on-failure
+
+      - name: Package
+        shell: pwsh
+        run: |
+          $version = '${{ steps.version.outputs.version }}'
+          $asset = "unsleep-v$version-x64.zip"
+          New-Item -ItemType Directory -Path dist -Force | Out-Null
+          Copy-Item ./build/Release/unsleep.exe ./dist/
+          Copy-Item ./LICENSE ./dist/
+          Compress-Archive -Path ./dist/unsleep.exe, ./dist/LICENSE -DestinationPath $asset
+          $hash = (Get-FileHash -Path $asset -Algorithm SHA256).Hash.ToLower()
+          "sha256 $hash" >> $env:GITHUB_STEP_SUMMARY
+
+      - name: Publish the GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $version = '${{ steps.version.outputs.version }}'
+          gh release create $env:GITHUB_REF_NAME "unsleep-v$version-x64.zip" --verify-tag --title $env:GITHUB_REF_NAME --generate-notes
